@@ -1,0 +1,6 @@
+[project]
+uuid = "940877ab-e872-47aa-80e6-1e342e8e5b03"
+phone = "254720523299"
+amount = 1
+name = "DevProtector"
+path = "/home/dennis/Desktop/projects/RustProjects/DevProtector"
