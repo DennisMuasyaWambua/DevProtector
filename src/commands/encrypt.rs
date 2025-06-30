@@ -417,22 +417,22 @@ fn should_encrypt(path: &Path) -> Result<bool, AppError> {
 fn find_build_file(framework: &Framework) -> Result<Option<PathBuf>, AppError> {
     let files = match framework {
         Framework::React | Framework::Vue | Framework::Angular => {
-                        vec!["build/index.html", "dist/index.html", "public/index.html"]
-            }
+            vec!["build/index.html", "dist/index.html", "public/index.html"]
+        }
         Framework::NodeJs => {
-                vec!["package.json", "server.js"]
-            }
+            vec!["package.json", "server.js"]
+        }
         Framework::Django => {
-                vec!["manage.py"]
-            }
+            vec!["manage.py"]
+        }
         Framework::Flask => {
-                vec!["app.py"]
-            }
+            vec!["app.py"]
+        }
         Framework::Rails => {
-                vec!["config.ru"]
-            }
-    _ => vec!["index.html", "main.html"],
-};
+            vec!["config.ru"]
+        }
+        _ => vec!["index.html", "main.html"],
+    };
     
     for file in files {
         if let Some(path) = find_file(file) {

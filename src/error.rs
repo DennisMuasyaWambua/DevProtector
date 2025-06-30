@@ -27,7 +27,7 @@ pub enum AppError {
     #[error("Injection error: {0}")]
     Injection(String),
     
-    #[error("Payment error: {0}\nRequired ENV variables: OAUTH_URL, STK_PUSH_URL, MPESA_SHORT_CODE, C2B_PASS_KEY, MPESA_CONSUMER_KEY, MPESA_CONSUMER_SECRET")]
+    #[error("Payment error: {0}")]
     Payment(String),
     
     #[error("Unexpected error: {0}")]

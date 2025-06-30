@@ -1,7 +1,6 @@
 mod commands;
 mod error;
 
-
 use clap::{Parser, Subcommand};
 use commands::{init, encrypt, status};
 use std::{env, process};
@@ -32,9 +31,6 @@ enum Commands {
         phone: String,
         #[arg(short, long)]
         amount: f32,
-        /// Remote path to initialize (overrides -p/--path option)
-        #[arg(short, long)]
-        remote: Option<String>,
     },
     /// Encrypt project files
     Encrypt,
@@ -44,14 +40,6 @@ enum Commands {
 
 #[tokio::main]
 async fn main() {
-    // Start ping task if .ipproject exists
-    // if let Ok(config) = std::fs::read_to_string(".ipproject") {
-    //     if let Some(uuid_line) = config.lines().find(|line| line.starts_with("uuid = ")) {
-    //         if let Some(uuid) = uuid_line.split('"').nth(1) {
-    //             ping::start_ping_task(uuid).await;
-    //         }
-    //     }
-    // }
     let cli = Cli::parse();
     
     // Configure logging
@@ -80,13 +68,7 @@ async fn main() {
 
     // Handle the command and store the result
     let result = match cli.command {
-        Commands::Init { phone, amount, remote } => {
-            if let Some(remote_path) = remote {
-                init::remote_init(&remote_path, phone, amount).await
-            } else {
-                init::run(phone, amount).await
-            }
-        },
+        Commands::Init { phone, amount } => init::run(phone, amount).await,
         Commands::Encrypt => encrypt::run().await,
         Commands::Status => status::run().await,
     };
